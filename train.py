@@ -149,6 +149,22 @@ def train(config, model, logger):
 
     epoch_tqdm = progress.add_task(description="[red]epoch progress", total=epochs)
     batch_tqdm = progress.add_task(description="[blue]batch progress", total=len(train_loader))
+    # define hook
+    class HookTool:
+        def __init__(self) -> None:
+            self.feature_map = None
+            
+        def hook_fun(self,module,fea_in,fea_out):
+            self.feature_map = fea_out
+            
+    
+    
+    fea_hooks=[]
+    for n,m in model.named_modules():
+        if "decoder" in n and "relu2" in n:
+            hook = HookTool()
+            m.register_forward_hook(hook.hook_fun)
+            fea_hooks.append(hook)
 
     accelerator = Accelerator()
     # * accelerate prepare
@@ -182,6 +198,7 @@ def train(config, model, logger):
                 gt = gt.type(torch.FloatTensor).to(accelerator.device)
 
                 pred = model(x)
+                print("testing hook",fea_hooks[0].feature_map.shape)
 
                 mask = pred.argmax(dim=1, keepdim=True)  # * [bs,1,h,w,d]
 
@@ -329,6 +346,15 @@ def main(config):
     for k, v in config.items():
         info += f"{k}: {v}\n"
     logger.info(info)
+    
+
+        # print(n)
+        # print(m)
+    # logger.info(f"load model from: {os.path.join(config.ckpt, config.latest_checkpoint_file)}")
+    # ckpt = torch.load(
+    #     os.path.join(config.ckpt, config.latest_checkpoint_file), map_location=lambda storage, loc: storage
+    # )
+    # model.load_state_dict(ckpt["model"])
 
     train(config, model, logger)
     logger.info(f"tensorboard file saved in:{config.hydra_path}")
