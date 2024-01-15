@@ -12,6 +12,7 @@ from process_input import process_x, process_gt
 # from logger import create_logger
 from timm.utils import AverageMeter
 from accelerate import Accelerator
+import torch.nn as nn
 
 # from utils import yaml_read
 # from utils.conf_base import Default_Conf
@@ -100,6 +101,7 @@ def train(config, model, logger):
 
     criterion = Binary_Loss()
     dice_criterion = DiceLoss().cuda()
+    criterion_ce= nn.CrossEntropyLoss().cuda()
 
     # * set scheduler strategy
     if config.use_scheduler:
@@ -181,18 +183,21 @@ def train(config, model, logger):
 
                 x = x.type(torch.FloatTensor).to(accelerator.device)
                 gt = gt.type(torch.FloatTensor).to(accelerator.device)
+                
+                if config.network == "IS":
+                    pred_1,pred = model(x)
+                    loss = criterion_ce(pred_1,gt)+criterion_ce(pred,gt)
+                    mask = pred.argmax(dim=1,keepdim=True)
+                else:
+                    pred = model(x)
+                    mask = pred.argmax(dim=1, keepdim=True)  # * [bs,1,h,w,d]
 
-                pred = model(x)
-                print("testing hook",fea_hooks[0].feature_map.shape)
+                    # *  pred -> mask (0 or 1)
+                    # mask = torch.sigmoid(pred.clone())  # TODO should use softmax, because it returns two probability (sum = 1)
+                    # mask[mask > 0.5] = 1
+                    # mask[mask <= 0.5] = 0
 
-                mask = pred.argmax(dim=1, keepdim=True)  # * [bs,1,h,w,d]
-
-                # *  pred -> mask (0 or 1)
-                # mask = torch.sigmoid(pred.clone())  # TODO should use softmax, because it returns two probability (sum = 1)
-                # mask[mask > 0.5] = 1
-                # mask[mask <= 0.5] = 0
-
-                loss = criterion(pred, gt) + dice_criterion(pred, gt)
+                    loss = criterion(pred, gt) + dice_criterion(pred, gt)
                 # loss.backward()
                 accelerator.backward(loss)
                 progress.refresh()
@@ -328,11 +333,11 @@ def main(config):
     elif config.network == "re_net":
         from models.three_d.RE_net import RE_Net
         model = RE_Net(classes=config.out_classes, channels=config.in_classes)
-    elif config.network == "IS_net":
-        from models.three_d.IS import UNet3D
-        model = UNet3D(in_channels=config.in_classes,out_channels=config.out_classes,init_features=32)
     elif config.network == "csrnet":
         from models.three_d.csrnet import UNet3D
+        model = UNet3D(in_channels=config.in_classes,out_channels=config.out_classes,init_features=32)
+    elif config.network =="IS":
+        from models.three_d.IS import UNet3D
         model = UNet3D(in_channels=config.in_classes,out_channels=config.out_classes,init_features=32)
 
     model.apply(weights_init_normal(config.init_type))

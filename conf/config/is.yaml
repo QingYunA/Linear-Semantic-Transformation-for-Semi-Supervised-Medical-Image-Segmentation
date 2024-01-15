@@ -1,5 +1,5 @@
 name: "is"
-network: "is"
+network: "IS"
 #* Output Settings
 output_dir: './logs/${config.name}'  # checkpoint_latest save path
 save_suffix: '.mhd'  # the file format saved when training

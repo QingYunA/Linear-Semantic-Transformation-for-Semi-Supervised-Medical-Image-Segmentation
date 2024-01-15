@@ -111,6 +111,8 @@ def predict(model, config, logger):
                 gt = process_gt(config, batch)
                 gt = gt.type(torch.FloatTensor).to(accelerator.device)
 
+                if config.network =="IS":
+                    _,pred = model(x)
                 pred = model(x)
 
                 # mask = torch.sigmoid(pred.clone())
@@ -207,6 +209,9 @@ def main(config):
         model = UNet3D(in_channels=config.in_classes,out_channels=config.out_classes,init_features=32)
     elif config.network == "csrnet":
         from models.three_d.csrnet import UNet3D
+        model = UNet3D(in_channels=config.in_classes,out_channels=config.out_classes,init_features=32) 
+    elif config.network == "IS":
+        from models.three_d.IS import UNet3D
         model = UNet3D(in_channels=config.in_classes,out_channels=config.out_classes,init_features=32)
 
     # * create logger
