@@ -2,6 +2,7 @@ import numpy as np
 from collections import OrderedDict
 import torch
 import torch.nn as nn
+import torch.fft as fft
 # from torchsummary import summary
 
 
@@ -111,7 +112,35 @@ class UNet3D(nn.Module):
             in_channels=features, out_channels=out_channels, kernel_size=1
         )
 
-    def forward(self, x, low_x, high_x):
+    def lowpass_torch(input, limit):
+        pass1 = torch.abs(fft.rfftfreq(input.shape[-1])) < limit
+        pass2 = torch.abs(fft.fftfreq(input.shape[-2])) < limit
+        # pass1 = torch.fft.fftshift(fft.rfftfreq(input.shape[-1])) < limit
+        # pass2 = torch.fft.fftshift(fft.fftfreq(input.shape[-2])) < limit
+        kernel = torch.outer(pass2, pass1).cuda()
+        
+        fft_input = fft.rfftn(input)
+        return fft.irfftn(fft_input * kernel, s=input.shape[-3:])
+
+    def highpass_torch(input, limit):
+
+        # temp0 = input.shape[-1]
+        # tmp = fft.rfftfreq(input.shape[-1])
+
+        # temp1 = fft.fftfreq(input.shape[-2])
+
+        pass1 = torch.abs(fft.rfftfreq(input.shape[-1])) > limit
+        pass2 = torch.abs(fft.fftfreq(input.shape[-2])) > limit
+        # pass1 = torch.fft.fftshift(fft.rfftfreq(input.shape[-1])) > limit
+        # pass2 = torch.fft.fftshift(fft.fftfreq(input.shape[-2])) > limit
+        kernel = torch.outer(pass2, pass1).cuda()
+        
+        fft_input = fft.rfftn(input)
+        return fft.irfftn(fft_input * kernel, s=input.shape[-3:])
+
+    def forward(self, x):
+        low_x = self.lowpass_torch(x,0.1)
+        high_x = self.highpass_torch(x,0.05)
         enc1 = self.encoder1(x)
         enc2 = self.encoder2(self.pool1(enc1))
         enc3 = self.encoder3(self.pool2(enc2))

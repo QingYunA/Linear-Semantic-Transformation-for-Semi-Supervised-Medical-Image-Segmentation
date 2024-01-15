@@ -2,6 +2,7 @@ import torchio as tio
 from pathlib import Path
 import torch
 import numpy as np
+from monai.metrics import compute_hausdorff_distance
 import copy
 
 
@@ -12,16 +13,23 @@ def all_metric(gt, wt_pred, et_pred, tc_pred):
     return [wt_dice, wt_recall, wt_specificity, wt_hs95], [et_dice, et_recall, et_specificity, et_hs95], [tc_dice, tc_recall, tc_specificity, tc_hs95]
 
 
-def metric(gt, pred):
+def metric(gt, pred,spacing=None):
     #* input shape: (batch, channel, height, width)
-    gt = gt.squeeze()  # (240,240)
-    pred = pred.squeeze()  # (240,240)
 
     preds = pred.detach().numpy()
     gts = gt.detach().numpy()
 
     pred = preds.astype(int)  # float data does not support bit_and and bit_or
     gdth = gts.astype(int)  # float data does not support bit_and and bit_or
+
+    if spacing:
+        pred = pred[None,:,:,:,:]
+        gdth = gdth[None,:,:,:,:]
+        hs95 = compute_hausdorff_distance(pred,gdth,percentile=95,spacing=spacing).numpy()[0][0]
+    else:
+        hs95=0
+    gdth = gdth.squeeze()  # (240,240)
+    pred = pred.squeeze()  # (240,240)
     fp_array = copy.deepcopy(pred)  # keep pred unchanged
     fn_array = copy.deepcopy(gdth)
     gdth_sum = np.sum(gdth)
@@ -58,7 +66,7 @@ def metric(gt, pred):
     # hs95 = hausdorff_95(gdth, pred, (1, 1))
     # hs95 = hausdorff_95(preds, gts, (1, 1, 1))
 
-    return jaccard, dice
+    return precision,recall,jaccard, dice,hs95
 
 
 # def hausdorff_95(gt_array, pred_array, spacing):
@@ -76,3 +84,9 @@ def metric(gt, pred):
 #     surface_distances = surface_distance.compute_surface_distances(pred_array, gt_array, spacing)
 #     hs95 = surface_distance.compute_robust_hausdorff(surface_distances, 95)
 #     return hs95
+
+
+if __name__ == '__main__':
+    a = torch.randn(1,1,1024,1024,32)
+    b = torch.randn(1,1,1024,1024,32)
+    precision,recall,jaccard, dice,hs95=metric(a,b,spacing=(1,1,1))

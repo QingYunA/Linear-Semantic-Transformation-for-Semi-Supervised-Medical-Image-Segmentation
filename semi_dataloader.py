@@ -20,6 +20,7 @@ from collections import Counter
 import hydra
 import tqdm
 from rich.progress import track
+from omegaconf import ListConfig
 
 
 sys.path.append("./")
@@ -30,6 +31,18 @@ def get_subjects(config):
     @description: get the subjects for normal training
     """
     subjects = []
+    # 预处理使用到的label
+    if isinstance(config.used_label,str):
+        split_res = config.used_label.split("-")
+        start = int(split_res[0])
+        end = int(split_res[1])
+        used_label  = range(start,end+1)
+    elif isinstance(config.used_label,ListConfig):
+        used_label =list(config.used_label)
+    else:
+        print(type(config.used_label))
+        raise ValueError("you must specify config.used_label as str or list")
+
     if "predict" in config.job_name:
         img_path = Path(config.pred_data_path)
         gt_path = Path(config.pred_gt_path)
@@ -51,15 +64,29 @@ def get_subjects(config):
         pos = np.sum(gt_ary == 1)
 
         threshold = np.sort(source_ary.flatten())[::-1][pos - 1]
-        # source_ary[source_ary > threshold] = threshold
         source_ary[source_ary > threshold] = 0
         source_ary = torch.tensor(source_ary)
 
-        subject = tio.Subject(
-            source=ScalarImage(tensor=source_ary, affine=source_img.affine),
-            # intensity_source=ScalarImage(dark),
-            gt=tio.ScalarImage(source),
-        )
+        if i+1 in used_label and "train" in config.job_name:
+            subject = tio.Subject(
+                source=ScalarImage(tensor=source_ary, affine=source_img.affine),
+                semi_gt=tio.ScalarImage(source),
+                gt=tio.LabelMap(gt),
+                used = torch.tensor(1)
+            )
+        elif "predict" in config.job_name:
+            subject = tio.Subject(
+                source = ScalarImage(tensor=source_ary,affine=source_img.affine),
+                gt = tio.LabelMap(gt)
+            )
+        else:
+            subject = tio.Subject(
+                source=ScalarImage(tensor=source_ary, affine=source_img.affine),
+                # intensity_source=ScalarImage(dark),
+                semi_gt=tio.ScalarImage(source),
+                gt=tio.LabelMap(gt),
+                used = torch.tensor(0)
+            )
         subjects.append(subject)
     return subjects
 
@@ -81,7 +108,7 @@ class Dataset(torch.utils.data.Dataset):
         self.training_set = tio.SubjectsDataset(self.subjects, transform=self.transforms)
 
         self.queue_dataset = Queue(
-            self.training_set, queue_length, samples_per_volume, UniformSampler(patch_size=self.patch_size), num_workers=10
+            self.training_set, queue_length, samples_per_volume, LabelSampler(patch_size=self.patch_size), num_workers=0
         )
 
     def to_list(self, string):

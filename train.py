@@ -99,7 +99,7 @@ def train(config, model, logger):
     from loss_function import Binary_Loss, DiceLoss, cross_entropy_3D
 
     criterion = Binary_Loss()
-    # dice_criterion = DiceLoss().cuda()
+    dice_criterion = DiceLoss().cuda()
 
     # * set scheduler strategy
     if config.use_scheduler:
@@ -149,22 +149,6 @@ def train(config, model, logger):
 
     epoch_tqdm = progress.add_task(description="[red]epoch progress", total=epochs)
     batch_tqdm = progress.add_task(description="[blue]batch progress", total=len(train_loader))
-    # define hook
-    class HookTool:
-        def __init__(self) -> None:
-            self.feature_map = None
-            
-        def hook_fun(self,module,fea_in,fea_out):
-            self.feature_map = fea_out
-            
-    
-    
-    fea_hooks=[]
-    for n,m in model.named_modules():
-        if "decoder" in n and "relu2" in n:
-            hook = HookTool()
-            m.register_forward_hook(hook.hook_fun)
-            fea_hooks.append(hook)
 
     accelerator = Accelerator()
     # * accelerate prepare
@@ -198,7 +182,6 @@ def train(config, model, logger):
                 gt = gt.type(torch.FloatTensor).to(accelerator.device)
 
                 pred = model(x)
-                print("testing hook",fea_hooks[0].feature_map.shape)
 
                 mask = pred.argmax(dim=1, keepdim=True)  # * [bs,1,h,w,d]
 
@@ -207,7 +190,7 @@ def train(config, model, logger):
                 # mask[mask > 0.5] = 1
                 # mask[mask <= 0.5] = 0
 
-                loss = criterion(pred, gt)
+                loss = criterion(pred, gt) + dice_criterion(pred, gt)
                 # loss.backward()
                 accelerator.backward(loss)
                 progress.refresh()
@@ -219,7 +202,7 @@ def train(config, model, logger):
 
             # * calculate metrics
             # TODO use reduce to sum up all rank's calculation results
-            _, dice = metric(gt.cpu().argmax(dim=1, keepdim=True), mask.cpu())
+            _, _,_,dice,_ = metric(gt.cpu().argmax(dim=1, keepdim=True), mask.cpu())
             # dice = dist.all_reduce(dice, op=dist.ReduceOp.SUM) / dist.get_world_size()
             # recall = dist.all_reduce(recall, op=dist.ReduceOp.SUM) / dist.get_world_size()
             # specificity = dist.all_reduce(specificity, op=dist.ReduceOp.SUM) / dist.get_world_size()
@@ -321,22 +304,37 @@ def main(config):
             config.patch_size = int(config.patch_size)
 
     # * model selection
-    if config.network == "res_unet":
+    if config.network == "resunet":
         from models.three_d.residual_unet3d import UNet
-
         model = UNet(in_channels=config.in_classes, n_classes=config.out_classes, base_n_filter=32)
     elif config.network == "unet":
         from models.three_d.unet3d import UNet3D  # * 3d unet
+        model = UNet3D(in_channels=config.in_classes,out_channels=config.out_classes,init_features=32)
 
-        model = UNet3D(in_channels=config.in_classes, out_channels=config.out_classes, init_features=32)
-    elif config.network == "er_net":
+    elif config.network == "csrnet":
+        from models.three_d.csrnet import UNet3D 
+        model = UNet3D(in_channels=config.in_classes,out_channels=config.out_classes,init_features=32)
+
+    elif config.network == 'vnet':
+        from models.three_d.vnet3d import VNet
+        model = VNet(in_channels=config.in_classes,classes= config.out_classes)
+
+    elif config.network == 'unetr':
+        from models.three_d.unetr import UNETR
+        model = UNETR(img_shape=config.img_shape, input_dim=config.in_classes, output_dim=config.out_classes,
+                      embed_dim=config.embed_dim, patch_size=config.unetr_patch_size, num_heads=config.num_heads, dropout=config.dropout)
+
+    elif config.network == "ernet":
         from models.three_d.ER_net import ER_Net
-
         model = ER_Net(classes=config.out_classes, channels=config.in_classes)
-    elif config.network == "re_net":
-        from models.three_d.RE_net import RE_Net
 
-        model = RE_Net(classes=config.out_classes, channels=config.in_classes)
+    elif config.network == "renet":
+        from models.three_d.RE_net import RE_Net
+        model = RE_Net(classes=config.in_classes, channels=config.out_classes)
+        
+    elif config.network == "is":
+        from models.three_d.IS import UNet3D
+        model = UNet3D(in_channels=config.in_classes,out_channels=config.out_classes,init_features=32)
 
     model.apply(weights_init_normal(config.init_type))
 

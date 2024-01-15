@@ -8,6 +8,7 @@ from tqdm import tqdm
 from utils.metric import metric
 from torch.optim.lr_scheduler import ReduceLROnPlateau, StepLR, CosineAnnealingLR
 from process_input import process_x, process_gt
+import itertools
 
 # from logger import create_logger
 from timm.utils import AverageMeter
@@ -96,20 +97,33 @@ def train(config, model, logger):
     # * set loss function
     from loss_function import Binary_Loss, DiceLoss, cross_entropy_3D
 
-    criterion = Binary_Loss()
+    semi_criterion = Binary_Loss()
+    criterion = torch.nn.MSELoss() 
     dice_criterion = DiceLoss().cuda()
 
 
     # * load model
-    assert config.ckpt is not None, "Extractor must have ckpt to load a model"
-    logger.info(f"load model from: {os.path.join(config.ckpt, config.latest_checkpoint_file)}")
-    ckpt = torch.load(
-        os.path.join(config.ckpt, config.latest_checkpoint_file), map_location=lambda storage, loc: storage
-    )
-    model.load_state_dict(ckpt["model"])
+    if config.load_mode == 1:  # * load weights from checkpoint
+        logger.info(f"load model from: {os.path.join(config.ckpt, config.latest_checkpoint_file)}")
+        ckpt = torch.load(
+            os.path.join(config.ckpt, config.latest_checkpoint_file), map_location=lambda storage, loc: storage
+        )
+        model.load_state_dict(ckpt["model"])
+        optimizer.load_state_dict(ckpt["optim"])
+        for state in optimizer.state.values():
+            for k, v in state.items():
+                if torch.is_tensor(v):
+                    state[k] = v.cuda()
 
-    # teacher model
-    model.eval()
+        if config.use_scheduler:
+            scheduler.load_state_dict(ckpt["scheduler"])
+        elapsed_epochs = ckpt["epoch"]
+        # elapsed_epochs = 0
+    else:
+        elapsed_epochs = 0
+
+    model.train()
+    
     # define hook
     class HookTool:
         def __init__(self) -> None:
@@ -133,31 +147,31 @@ def train(config, model, logger):
     from models.three_d.samantic_extractor import Extractor
     extractor = Extractor(dims=dims,size=(64,64,64),target_class=2)
     extractor.train()
-    # * set optimizer
-    optimizer = torch.optim.Adam(extractor.parameters(), lr=config.init_lr)
+
+    # * set optimizer 两个网络参数联合训练
+    optimizer = torch.optim.Adam(itertools.chain(model.parameters(),extractor.parameters()), lr=config.init_lr)
     # * set scheduler strategy
     if config.use_scheduler:
         scheduler = StepLR(optimizer, step_size=config.scheduler_step_size, gamma=config.scheduler_gamma)
-
-    print(extractor.parameters)
     # * tensorboard writer
     writer = SummaryWriter(config.hydra_path)
 
     # * load datasetBs
-    from dataloader import Dataset
+    from semi_dataloader import Dataset
 
     train_dataset = Dataset(config)
     #! in distributed training, the 'shuffle' must be false!
     train_loader = torch.utils.data.DataLoader(
         dataset=train_dataset.queue_dataset,
         batch_size=config.batch_size,
-        shuffle=False,
+        shuffle=True,
         num_workers=0,
         pin_memory=True,
         drop_last=True,
     )
 
-    epochs = config.epochs 
+    epochs = config.epochs - elapsed_epochs
+    iteration = elapsed_epochs * len(train_loader)
 
     epoch_tqdm = progress.add_task(description="[red]epoch progress", total=epochs)
     batch_tqdm = progress.add_task(description="[blue]batch progress", total=len(train_loader))
@@ -165,12 +179,12 @@ def train(config, model, logger):
     accelerator = Accelerator()
     # * accelerate prepare
     train_loader, model, extractor,optimizer, scheduler = accelerator.prepare(train_loader, model, extractor,optimizer, scheduler)
-    iteration = 0
-
 
     progress.start()
     for epoch in range(1, epochs + 1):
         progress.update(epoch_tqdm, completed=epoch)
+        epoch += elapsed_epochs
+
         num_iters = 0
 
         load_meter = AverageMeter()
@@ -184,30 +198,32 @@ def train(config, model, logger):
                 load_time = time.time() - load_start
                 optimizer.zero_grad()
 
-                x = process_x(config, batch)  # * from batch extract x:[bs,4 or 1,h,w,d]
-                gt = process_gt(config, batch)  # * from batch extract gt:[bs,4 or 1,h,w,d]
-                gt_back = torch.zeros_like(gt)
-                gt_back[gt == 0] = 1
-                gt = torch.cat([gt_back, gt], dim=1)  # * [bs,2,h,w,d]
-
+                x = batch["source"]["data"]
+                semi_gt = batch["semi_gt"]["data"]
                 x = x.type(torch.FloatTensor).to(accelerator.device)
-                gt = gt.type(torch.FloatTensor).to(accelerator.device)
-
+                semi_gt = semi_gt.type(torch.FloatTensor).to(accelerator.device)
                 pred = model(x)
-                extractor_out = extractor(fea_hooks)
-                extractor_pred = extractor_out[-1]
 
-                mask = extractor_pred.argmax(dim=1, keepdim=True)  # * [bs,1,h,w,d]
+                mse_loss = criterion(pred, semi_gt)
+                loss = mse_loss
 
-                # *  pred -> mask (0 or 1)
-                # mask = torch.sigmoid(pred.clone())  # TODO should use softmax, because it returns two probability (sum = 1)
-                # mask[mask > 0.5] = 1
-                # mask[mask <= 0.5] = 0
+                # if batch["gt"]["data"].dim() != 1:
+                # if "data" in batch["gt"]:
+                print(batch["used"])
+                if batch["used"].cpu().all()== torch.tensor(1):
+                    gt = batch["gt"]["data"]
+                    gt_back = torch.zeros_like(gt)
+                    gt_back[gt == 0] = 1
+                    gt = torch.cat([gt_back, gt], dim=1)  # * [bs,2,h,w,d]
+                    gt = gt.type(torch.FloatTensor).to(accelerator.device)                
+                    extractor_out = extractor(fea_hooks)
+                    extractor_pred = extractor_out[-1]
 
-                loss = criterion(extractor_pred, gt) #+ dice_criterion(extractor_pred, gt)
-                # loss.backward()
-                # accelerator.backward(loss)
-                loss.backward()
+                    mask = extractor_pred.argmax(dim=1, keepdim=True)  # * [bs,1,h,w,d]
+                    bce_loss = semi_criterion(extractor_pred, gt) + dice_criterion(extractor_pred, gt)
+                    loss += bce_loss
+
+                accelerator.backward(loss)
                 progress.refresh()
 
             optimizer.step()
@@ -217,7 +233,9 @@ def train(config, model, logger):
 
             # * calculate metrics
             # TODO use reduce to sum up all rank's calculation results
-            _, dice = metric(gt.cpu().argmax(dim=1, keepdim=True), mask.cpu())
+            if batch["used"].all():
+                _, _,_,dice,_ = metric(gt.cpu().argmax(dim=1, keepdim=True), mask.cpu())
+                dice_meter.update(dice, x.size(0))
             # dice = dist.all_reduce(dice, op=dist.ReduceOp.SUM) / dist.get_world_size()
             # recall = dist.all_reduce(recall, op=dist.ReduceOp.SUM) / dist.get_world_size()
             # specificity = dist.all_reduce(specificity, op=dist.ReduceOp.SUM) / dist.get_world_size()
@@ -225,7 +243,7 @@ def train(config, model, logger):
             writer.add_scalar("Training/Loss", loss.item(), iteration)
             # writer.add_scalar('Training/recall', recall, iteration)
             # writer.add_scalar('Training/specificity', specificity, iteration)
-            writer.add_scalar("Training/dice", dice, iteration)
+            # writer.add_scalar("Training/dice", dice, iteration)
 
             temp_file_base = os.path.join(config.hydra_path, "train_temp")
             os.makedirs(temp_file_base, exist_ok=True)
@@ -250,7 +268,6 @@ def train(config, model, logger):
             #             pred_data.save(os.path.join(temp_file_base, f"epoch-{epoch:04d}-batch-{i:02d}-pred" + conf.save_arch))
             # * record metris
             loss_meter.update(loss.item(), x.size(0))
-            dice_meter.update(dice, x.size(0))
             # recall_meter.update(recall, x.size(0))
             # spe_meter.update(specificity, x.size(0))
             train_time.update(time.time() - train_start)
@@ -284,7 +301,8 @@ def train(config, model, logger):
         scheduler_dict = scheduler.state_dict() if config.use_scheduler else None
         torch.save(
             {
-                "model": extractor.state_dict(),
+                "model": model.state_dict(),
+                "extractor": extractor.state_dict(),
                 "optim": optimizer.state_dict(),
                 "scheduler": scheduler_dict,
                 "epoch": epoch,
@@ -296,7 +314,8 @@ def train(config, model, logger):
         if epoch % config.epochs_per_checkpoint == 0:
             torch.save(
                 {
-                    "model": extractor.state_dict(),
+                    "model": model.state_dict(),
+                    "extractor": extractor.state_dict(),
                     "optim": optimizer.state_dict(),
                     "scheduler": scheduler_dict,
                     "epoch": epoch,
@@ -309,14 +328,14 @@ def train(config, model, logger):
 @hydra.main(config_path="conf", config_name="config", version_base="1.3")
 def main(config):
     config = config["config"]
-    if isinstance(config.patch_size, str):
-        assert (
-            len(config.patch_size.split(",")) <= 3
-        ), f'patch size can only be one str or three str but got {len(config.patch_size.split(","))}'
-        if len(config.patch_size.split(",")) == 3:
-            config.patch_size = tuple(map(int, config.patch_size.split(",")))
-        else:
-            config.patch_size = int(config.patch_size)
+    # if isinstance(config.patch_size, str):
+    #     assert (
+    #         len(config.patch_size.split(",")) <= 3
+    #     ), f'patch size can only be one str or three str but got {len(config.patch_size.split(","))}'
+    #     if len(config.patch_size.split(",")) == 3:
+    #         config.patch_size = tuple(map(int, config.patch_size.split(",")))
+    #     else:
+    #         config.patch_size = int(config.patch_size)
 
     # * model selection
     if config.network == "res_unet":
@@ -326,7 +345,7 @@ def main(config):
     elif config.network == "unet":
         from models.three_d.unet3d import UNet3D  # * 3d unet
 
-        model = UNet3D(in_channels=config.in_classes, out_channels=config.out_classes, init_features=32)
+        model = UNet3D(in_channels=config.in_classes, out_channels=1, init_features=32)
     elif config.network == "er_net":
         from models.three_d.ER_net import ER_Net
 
@@ -336,7 +355,7 @@ def main(config):
 
         model = RE_Net(classes=config.out_classes, channels=config.in_classes)
 
-    # model.apply(weights_init_normal(config.init_type))
+    model.apply(weights_init_normal(config.init_type))
 
     # * create logger
     logger = get_logger(config)

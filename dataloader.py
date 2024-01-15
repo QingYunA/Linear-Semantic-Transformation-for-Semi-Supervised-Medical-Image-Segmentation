@@ -23,6 +23,7 @@ from torchio import AFFINE, DATA
 import torchio as tio
 import torch
 import sys
+from omegaconf import ListConfig
 
 sys.path.append("./")
 
@@ -31,7 +32,17 @@ def get_subjects(config):
     """
     @description: get the subjects for normal training
     """
-    subjects = []
+    subjects = []    # 预处理使用到的label
+    if isinstance(config.used_label,str):
+        split_res = config.used_label.split("-")
+        start = int(split_res[0])
+        end = int(split_res[1])
+        used_label  = range(start,end+1)
+    elif isinstance(config.used_label,ListConfig):
+        used_label =list(config.used_label)
+    else:
+        print(type(config.used_label))
+        raise ValueError("you must specify config.used_label as str or list")
     if "predict" in config.job_name:
         img_path = Path(config.pred_data_path)
         gt_path = Path(config.pred_gt_path)
@@ -41,11 +52,12 @@ def get_subjects(config):
     x_generator = sorted(img_path.glob("*.mhd"))
     gt_generator = sorted(gt_path.glob("*.mhd"))
     for i, (source, gt) in enumerate(zip(x_generator, gt_generator)):
-        subject = tio.Subject(
-            source=tio.ScalarImage(source),
-            gt=tio.LabelMap(gt),
-        )
-        subjects.append(subject)
+        if i in used_label or "predict" in config.job_name:
+            subject = tio.Subject(
+                source=tio.ScalarImage(source),
+                gt=tio.LabelMap(gt),
+            )
+            subjects.append(subject)
     return subjects
 
 

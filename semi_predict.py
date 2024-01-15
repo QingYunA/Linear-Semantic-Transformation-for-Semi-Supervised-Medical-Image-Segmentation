@@ -86,9 +86,7 @@ def predict(model, config, logger):
     test_result = model(test_tensor)
     dims = [i.feature_map.shape[1] for i in fea_hooks]
     extractor = Extractor(dims=dims,size=(64,64,64),target_class=2)    
-    logger.info(f"extractor ckpt load model from:{os.path.join(config.extractor_ckpt, config.latest_checkpoint_file)}")
-    ex_ckpt = torch.load(os.path.join(config.extractor_ckpt, config.latest_checkpoint_file), map_location=lambda storage, loc: storage)
-    extractor.load_state_dict(ex_ckpt["model"])
+    extractor.load_state_dict(ckpt["extractor"])
     extractor.eval()
 
 
@@ -98,7 +96,7 @@ def predict(model, config, logger):
     dataset = Dataset(config).subjects  # ! notice in predict.py should use Dataset(conf).subjects
     znorm = ZNormalization()
 
-    jaccard_ls, dice_ls = [], []
+    pre_ls,rec_ls,jaccard_ls, dice_ls,hs95_ls = [], [],[],[],[]
 
     file_tqdm = progress.add_task("[red]Predicting file", total=len(dataset))
 
@@ -111,6 +109,7 @@ def predict(model, config, logger):
         item = znorm(item)
         grid_sampler = tio.inference.GridSampler(item, patch_size=(config.patch_size), patch_overlap=(4, 4, 36))
         affine = item["source"]["affine"]
+        spacing = item.spacing
         # * dist sampler
         # dist_sampler = torch.utils.data.distributed.DistributedSampler(grid_sampler, shuffle=True)
 
@@ -157,24 +156,31 @@ def predict(model, config, logger):
             save_mhd(pred_t, affine, i, config)
 
             # * calculate metrics
-            jaccard, dice = metric(gt_t, pred_t)
+            pre,rec,jaccard, dice,hs95 = metric(gt_t, pred_t,spacing)
+            pre_ls.append(pre)
+            rec_ls.append(rec)
             jaccard_ls.append(jaccard)
             dice_ls.append(dice)
-            logger.info(f"File {i+1} metrics: " f"\njaccard: {jaccard}" f"\ndice: {dice}")
+            hs95_ls.append(hs95)
+            logger.info(f"File {i+1} metrics: " f"\n presicion: {pre}" f"\n recall: {rec}" f"\njaccard: {jaccard}" f"\ndice: {dice}" f"\n hs95: {hs95}")
         progress.update(file_tqdm, completed=i + 1)
-    save_csv(jaccard_ls, dice_ls, config)
+    save_csv(pre_ls,rec_ls,jaccard_ls, dice_ls,hs95_ls,config)
+    presion_mean = np.mean(pre_ls)
+    rec_mean = np.mean(rec_ls)
     jaccard_mean = np.mean(jaccard_ls)
     dice_mean = np.mean(dice_ls)
+    hs95_mean = np.mean(hs95_ls)
     # print('-' * 40)
-    logger.info(f"\njaccard_mean: {jaccard_mean}" f"\ndice_mean: {dice_mean}")
+    logger.info(f"\npresion_mean:{presion_mean}" f"\nrecall_mean:{rec_mean}" f"jaccard_mean: {jaccard_mean}" f"\ndice_mean: {dice_mean}"
+    f"\n hs95_mean: {hs95_mean}")
 
 
-def save_csv(jaccard_ls, dice_ls, config):
+def save_csv(pre_ls,rec_ls,jaccard_ls, dice_ls,hs95_ls,config):
     import pandas as pd
 
-    data = {"jaccard": jaccard_ls, "dice": dice_ls}
+    data = {"presion":pre_ls,"recall":rec_ls,"jaccard": jaccard_ls, "dice": dice_ls,"hs95":hs95_ls}
     df = pd.DataFrame(data)
-    df.loc[len(df)] = [df.iloc[:, 0].mean(), df.iloc[:, 1].mean()]
+    df.loc[len(df)] = [df.iloc[:, 0].mean(), df.iloc[:, 1].mean(),df.iloc[:,2].mean,df.iloc[:,3].mean,df.iloc[:,4].mean]
     save_path = os.path.join(config.hydra_path, "metrics.csv")
     df.to_csv(save_path, index=False)
 

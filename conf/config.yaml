@@ -7,22 +7,27 @@ hydra:
     dir: ${config.output_dir}/${now:%Y-%m-%d}/${now:%H-%M-%S}
 
 config:
-  data_path: '/home/cc/ying_tof/train/source'
-  gt_path: '/home/cc/ying_tof/train/label1'
-  pred_data_path: '/home/cc/ying_tof/test/source/'
-  pred_gt_path: '/home/cc/ying_tof/test/label1/'
+  # data_path: '/home/cc/ying_tof/train/source'
+  # gt_path: '/home/cc/ying_tof/train/label1'
+  # pred_data_path: '/home/cc/ying_tof/test/source/'
+  # pred_gt_path: '/home/cc/ying_tof/test/label1/'
 
   # data_path: '/home/cc/zhougu/zhougu/train/source'
   # gt_path: '/home/cc/zhougu/zhougu/train/label'
   # pred_data_path: '/home/cc/zhougu/zhougu/test-select/source'
   # pred_gt_path: '/home/cc/zhougu/zhougu/test-select/label'
 
+  data_path: '/home/cc/COVID-19/Train/source/'
+  gt_path: '/home/cc/COVID-19/Train/label/'
+  pred_data_path: '/home/cc/COVID-19/Test/source/'
+  pred_gt_path: '/home/cc/COVID-19/Test/label/'
+
   init_type: 'none'  # ['normal', 'xavier', 'xavier_uniform', 'kaiming', 'orthogonal', 'none]
-  aug: False  # True or False
-  epochs: 500
+  aug: True  # True or False
+  epochs: 100
   epochs_per_checkpoint: 25
   batch_size: 4
-  init_lr: 0.01
+  init_lr: 0.0001
   scheduler_step_size: 20
   scheduler_gamma: 0.8
   cudnn_enabled: True

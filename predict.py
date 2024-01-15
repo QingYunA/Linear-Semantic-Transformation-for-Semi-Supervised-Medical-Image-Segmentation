@@ -72,7 +72,7 @@ def predict(model, config, logger):
     dataset = Dataset(config).subjects  # ! notice in predict.py should use Dataset(conf).subjects
     znorm = ZNormalization()
 
-    jaccard_ls, dice_ls = [], []
+    pre_ls,rec_ls,jaccard_ls, dice_ls,hs95_ls = [], [],[],[],[]
 
     file_tqdm = progress.add_task("[red]Predicting file", total=len(dataset))
 
@@ -85,6 +85,7 @@ def predict(model, config, logger):
         item = znorm(item)
         grid_sampler = tio.inference.GridSampler(item, patch_size=(config.patch_size), patch_overlap=(4, 4, 36))
         affine = item["source"]["affine"]
+        spacing =item.spacing
         # * dist sampler
         # dist_sampler = torch.utils.data.distributed.DistributedSampler(grid_sampler, shuffle=True)
 
@@ -128,29 +129,32 @@ def predict(model, config, logger):
 
             # * save pred mhd file
             save_mhd(pred_t, affine, i, config)
-
             # * calculate metrics
-            jaccard, dice = metric(gt_t, pred_t)
+            pre,rec,jaccard, dice,hs95 = metric(gt_t, pred_t,spacing)
+            pre_ls.append(pre)
+            rec_ls.append(rec)
             jaccard_ls.append(jaccard)
             dice_ls.append(dice)
-            logger.info(f"File {i+1} metrics: " f"\njaccard: {jaccard}" f"\ndice: {dice}")
+            hs95_ls.append(hs95)
+            logger.info(f"File {i+1} metrics: " f"\n presicion: {pre}" f"\n recall: {rec}" f"\njaccard: {jaccard}" f"\ndice: {dice}" f"\n hs95: {hs95}")
         progress.update(file_tqdm, completed=i + 1)
-    save_csv(jaccard_ls, dice_ls, config)
+    save_csv(pre_ls,rec_ls,jaccard_ls, dice_ls,hs95_ls,config)
+    presion_mean = np.mean(pre_ls)
+    rec_mean = np.mean(rec_ls)
     jaccard_mean = np.mean(jaccard_ls)
     dice_mean = np.mean(dice_ls)
+    hs95_mean = np.mean(hs95_ls)
     # print('-' * 40)
-    logger.info(f"\njaccard_mean: {jaccard_mean}" f"\ndice_mean: {dice_mean}")
+    logger.info(f"\npresion_mean:{presion_mean}" f"\nrecall_mean:{rec_mean}" f"\njaccard_mean: {jaccard_mean}" f"\ndice_mean: {dice_mean}" f"\n hs95_mean: {hs95_mean}")
 
-
-def save_csv(jaccard_ls, dice_ls, config):
+def save_csv(pre_ls,rec_ls,jaccard_ls, dice_ls,hs95_ls,config):
     import pandas as pd
 
-    data = {"jaccard": jaccard_ls, "dice": dice_ls}
+    data = {"presion":pre_ls,"recall":rec_ls,"jaccard": jaccard_ls, "dice": dice_ls,"hs95":hs95_ls}
     df = pd.DataFrame(data)
-    df.loc[len(df)] = [df.iloc[:, 0].mean(), df.iloc[:, 1].mean()]
+    df.loc[len(df)] = [df.iloc[:, 0].mean(), df.iloc[:, 1].mean(),df.iloc[:,2].mean(),df.iloc[:,3].mean(),df.iloc[:,4].mean()]
     save_path = os.path.join(config.hydra_path, "metrics.csv")
     df.to_csv(save_path, index=False)
-
 
 def save_mhd(pred, affine, index, config):
     save_base = os.path.join(config.hydra_path, "pred_file")
@@ -174,18 +178,37 @@ def main(config):
             config.patch_size = int(config.patch_size)
 
     os.makedirs(config.hydra_path, exist_ok=True)
+    # * model selection
     if config.network == "res_unet":
         from models.three_d.residual_unet3d import UNet
-
         model = UNet(in_channels=config.in_classes, n_classes=config.out_classes, base_n_filter=32)
     elif config.network == "unet":
         from models.three_d.unet3d import UNet3D  # * 3d unet
+        model = UNet3D(in_channels=config.in_classes,out_channels=config.out_classes,init_features=32)
 
-        model = UNet3D(in_channels=config.in_classes, out_channels=config.out_classes, init_features=32)
-    elif config.network == "er_net":
+    elif config.network == 'vnet':
+        from models.three_d.vnet3d import VNet
+        model = VNet(in_channels=config.in_classes,classes= config.out_classes)
+
+    elif config.network == 'unetr':
+        from models.three_d.unetr import UNETR
+        model = UNETR(img_shape=config.img_shape, input_dim=config.in_classes, output_dim=config.out_classes,
+                      embed_dim=config.embed_dim, patch_size=config.unetr_patch_size, num_heads=config.num_heads, dropout=config.dropout)
+
+    elif config.network == "ernet":
         from models.three_d.ER_net import ER_Net
-
         model = ER_Net(classes=config.out_classes, channels=config.in_classes)
+
+    elif config.network == "renet":
+        from models.three_d.RE_net import RE_Net
+        model = RE_Net(classes=config.in_classes, channels=config.out_classes)
+    elif config.network == "IS_net":
+        from models.three_d.IS import UNet3D
+        model = UNet3D(in_channels=config.in_classes,out_channels=config.out_classes,init_features=32)
+    elif config.network == "csrnet":
+        from models.three_d.csrnet import UNet3D
+        model = UNet3D(in_channels=config.in_classes,out_channels=config.out_classes,init_features=32)
+
     # * create logger
     logger = get_logger(config)
     info = "\nParameter Settings:\n"

@@ -38,9 +38,9 @@ def initialize_weights(*models):
 class ResEncoder(nn.Module):
     def __init__(self, in_channels, out_channels):
         super(ResEncoder, self).__init__()
-        self.conv1 = nn.Conv3d(in_channels, out_channels, kernel_size=3, padding=1)
+        self.conv1 = nn.Conv3d(in_channels, out_channels//2, kernel_size=3, padding=1)
         self.bn1 = nn.BatchNorm3d(out_channels)
-        self.conv2 = nn.Conv3d(out_channels, out_channels, kernel_size=3, padding=1)
+        self.conv2 = nn.Conv3d(out_channels//2, out_channels, kernel_size=3, padding=1)
         self.bn2 = nn.BatchNorm3d(out_channels)
         self.relu = nn.ReLU(inplace=False)
         self.conv1x1 = nn.Conv3d(in_channels, out_channels, kernel_size=1)
@@ -49,7 +49,7 @@ class ResEncoder(nn.Module):
         residual = self.conv1x1(x)
         out = self.relu(self.bn1(self.conv1(x)))
         out = self.relu(self.bn2(self.conv2(out)))
-        out = out + residual
+        out += residual
         out = self.relu(out)
         return out
 
@@ -77,11 +77,11 @@ class Decoder(nn.Module):
 
 
 class RE_Net(nn.Module):
-    def __init__(self, classes, channels):
-    # def __init__(self):
+    # def __init__(self, classes, channels):
+    def __init__(self):
 
         super(RE_Net, self).__init__()
-        self.encoder1 = ResEncoder(classes, 32)
+        self.encoder1 = ResEncoder(1, 32)
         self.encoder2 = ResEncoder(32, 64)
         self.encoder3 = ResEncoder(64, 128)
         self.bridge = ResEncoder(128, 256)
@@ -104,7 +104,7 @@ class RE_Net(nn.Module):
         self.up3 = deconv(256, 128)
         self.up2 = deconv(128, 64)
         self.up1 = deconv(64, 32)
-        self.final = nn.Conv3d(32, channels, kernel_size=1, padding=0)
+        self.final = nn.Conv3d(32, 1, kernel_size=1, padding=0)
         initialize_weights(self)
 
     def forward(self, x):
