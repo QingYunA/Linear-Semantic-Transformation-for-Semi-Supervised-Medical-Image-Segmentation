@@ -4,7 +4,6 @@ network: "csrnet"
 output_dir: './logs/${config.name}'  # checkpoint_latest save path
 save_suffix: '.mhd'  # the file format saved when training
 #* Model Settings
-used_label: 1-12 # "1-5":第一个数据到第五个数据  [2,3,5,6,7] 第2 3 5 6 7个数据被采用
 in_classes: 1
 out_classes: 2
 load_mode: 0  # 0: load nothing 1: load from checkpoint 2: load from pre_trained model(supervised)

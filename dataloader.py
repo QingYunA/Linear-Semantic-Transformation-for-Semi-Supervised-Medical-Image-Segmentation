@@ -75,7 +75,7 @@ class Dataset(torch.utils.data.Dataset):
         self.training_set = tio.SubjectsDataset(self.subjects, transform=self.transforms)
 
         self.queue_dataset = Queue(
-            self.training_set, queue_length, samples_per_volume, LabelSampler(patch_size=config.patch_size), num_workers=8
+            self.training_set, queue_length, samples_per_volume, LabelSampler(patch_size=config.patch_size), num_workers=0
         )
 
     def transform(self, config):

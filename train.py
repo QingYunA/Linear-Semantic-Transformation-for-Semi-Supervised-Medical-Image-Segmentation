@@ -316,6 +316,7 @@ def main(config):
         model = UNet(in_channels=config.in_classes, n_classes=config.out_classes, base_n_filter=32)
     elif config.network == "unet":
         from models.three_d.unet3d import UNet3D  # * 3d unet
+        model = UNet3D(in_channels=config.in_classes,out_channels=config.out_classes,init_features=32)
 
     elif config.network == 'vnet':
         from models.three_d.vnet3d import VNet

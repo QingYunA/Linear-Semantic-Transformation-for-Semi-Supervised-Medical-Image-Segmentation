@@ -17,10 +17,10 @@ config:
   # pred_data_path: '/home/cc/zhougu/zhougu/test-select/source'
   # pred_gt_path: '/home/cc/zhougu/zhougu/test-select/label'
 
-  data_path: '/home/cc/COVID-19/Train/source/'
-  gt_path: '/home/cc/COVID-19/Train/label/'
-  pred_data_path: '/home/cc/COVID-19/Test/source/'
-  pred_gt_path: '/home/cc/COVID-19/Test/label/'
+  data_path: '/nvme/MIDAS/train/source'
+  gt_path: '/nvme/MIDAS/train/label'
+  pred_data_path: '/nvme/MIDAS/test/source'
+  pred_gt_path: '/nvme/MIDAS/test/label'
 
   init_type: 'none'  # ['normal', 'xavier', 'xavier_uniform', 'kaiming', 'orthogonal', 'none]
   aug: True  # True or False
@@ -33,6 +33,7 @@ config:
   cudnn_enabled: True
   cudnn_benchmark: True
   use_scheduler: True
+  used_label: "1-13" # "1-5":第一个数据到第五个数据  [2,3,5,6,7] 第2 3 5 6 7个数据被采用
   
   job_name: ${hydra:job.name}
   hydra_path: ${hydra:runtime.output_dir}
