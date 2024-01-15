@@ -6,6 +6,7 @@ from torchio.transforms import (
     ZNormalization,
     OneOf,
     Compose,
+    RandomNoise
 )
 import os
 import numpy as np
@@ -56,32 +57,21 @@ def get_subjects(config):
         description="[green]Preparing Dataset",
         total=len(x_generator),
     ):
-        source_img = tio.ScalarImage(source)
-        gt_img = tio.LabelMap(gt)
-        source_ary = source_img.data.numpy()
-        gt_ary = gt_img.data.numpy()
-
-        pos = np.sum(gt_ary == 1)
-
-        threshold = np.sort(source_ary.flatten())[::-1][pos - 1]
-        source_ary[source_ary > threshold] = 0
-        source_ary = torch.tensor(source_ary)
-
         if i+1 in used_label and "train" in config.job_name:
             subject = tio.Subject(
-                source=ScalarImage(tensor=source_ary, affine=source_img.affine),
+                source=ScalarImage(source),
                 semi_gt=tio.ScalarImage(source),
                 gt=tio.LabelMap(gt),
                 used = torch.tensor(1)
             )
         elif "predict" in config.job_name:
             subject = tio.Subject(
-                source = ScalarImage(tensor=source_ary,affine=source_img.affine),
+                source=ScalarImage(source),
                 gt = tio.LabelMap(gt)
             )
         else:
             subject = tio.Subject(
-                source=ScalarImage(tensor=source_ary, affine=source_img.affine),
+                source=ScalarImage(source),
                 # intensity_source=ScalarImage(dark),
                 semi_gt=tio.ScalarImage(source),
                 gt=tio.LabelMap(gt),
@@ -122,6 +112,7 @@ class Dataset(torch.utils.data.Dataset):
                     # RandomAffine(degrees=20),
                     # RandomNoise(std=0.0001),
                     RandomSwap(patch_size=self.swap_size, num_iterations=config.swap_iterations,include="source"),
+                    RandomNoise(std=0.0001,include="source"),
                     ZNormalization(),
                     # tio.transforms.RescaleIntensity(out_min_max=(0, 1)),
                 ]
