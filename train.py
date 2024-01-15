@@ -150,6 +150,7 @@ def train(config, model, logger):
     epoch_tqdm = progress.add_task(description="[red]epoch progress", total=epochs)
     batch_tqdm = progress.add_task(description="[blue]batch progress", total=len(train_loader))
 
+
     accelerator = Accelerator()
     # * accelerate prepare
     train_loader, model, optimizer, scheduler = accelerator.prepare(train_loader, model, optimizer, scheduler)
@@ -182,6 +183,7 @@ def train(config, model, logger):
                 gt = gt.type(torch.FloatTensor).to(accelerator.device)
 
                 pred = model(x)
+                print("testing hook",fea_hooks[0].feature_map.shape)
 
                 mask = pred.argmax(dim=1, keepdim=True)  # * [bs,1,h,w,d]
 
@@ -304,16 +306,11 @@ def main(config):
             config.patch_size = int(config.patch_size)
 
     # * model selection
-    if config.network == "resunet":
+    if config.network == "res_unet":
         from models.three_d.residual_unet3d import UNet
         model = UNet(in_channels=config.in_classes, n_classes=config.out_classes, base_n_filter=32)
     elif config.network == "unet":
         from models.three_d.unet3d import UNet3D  # * 3d unet
-        model = UNet3D(in_channels=config.in_classes,out_channels=config.out_classes,init_features=32)
-
-    elif config.network == "csrnet":
-        from models.three_d.csrnet import UNet3D 
-        model = UNet3D(in_channels=config.in_classes,out_channels=config.out_classes,init_features=32)
 
     elif config.network == 'vnet':
         from models.three_d.vnet3d import VNet
@@ -324,16 +321,18 @@ def main(config):
         model = UNETR(img_shape=config.img_shape, input_dim=config.in_classes, output_dim=config.out_classes,
                       embed_dim=config.embed_dim, patch_size=config.unetr_patch_size, num_heads=config.num_heads, dropout=config.dropout)
 
-    elif config.network == "ernet":
+    elif config.network == "er_net":
         from models.three_d.ER_net import ER_Net
         model = ER_Net(classes=config.out_classes, channels=config.in_classes)
 
-    elif config.network == "renet":
+    elif config.network == "re_net":
         from models.three_d.RE_net import RE_Net
-        model = RE_Net(classes=config.in_classes, channels=config.out_classes)
-        
-    elif config.network == "is":
+        model = RE_Net(classes=config.out_classes, channels=config.in_classes)
+    elif config.network == "IS_net":
         from models.three_d.IS import UNet3D
+        model = UNet3D(in_channels=config.in_classes,out_channels=config.out_classes,init_features=32)
+    elif config.network == "csrnet":
+        from models.three_d.csrnet import UNet3D
         model = UNet3D(in_channels=config.in_classes,out_channels=config.out_classes,init_features=32)
 
     model.apply(weights_init_normal(config.init_type))
